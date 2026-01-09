@@ -47,7 +47,12 @@ module.exports = async (req, res) => {
         }
 
         try {
-          const response = await fetch(`${API_BASE_URL}/v1/audio/transcriptions`, {
+          // Set a longer timeout for the API call (50 seconds to stay under 60s limit)
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Request timeout')), 50000);
+          });
+
+          const fetchPromise = fetch(`${API_BASE_URL}/v1/audio/transcriptions`, {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${API_KEY}`,
@@ -56,15 +61,28 @@ module.exports = async (req, res) => {
             body: formData
           });
 
-          const data = await response.json();
+          const response = await Promise.race([fetchPromise, timeoutPromise]);
 
           if (!response.ok) {
-            return resolve(res.status(response.status).json(data));
+            const errorText = await response.text();
+            let errorData;
+            try {
+              errorData = JSON.parse(errorText);
+            } catch {
+              errorData = { error: errorText };
+            }
+            return resolve(res.status(response.status).json(errorData));
           }
 
+          const data = await response.json();
           resolve(res.json(data));
         } catch (error) {
           console.error('Transcription error:', error);
+          if (error.message === 'Request timeout') {
+            return reject(res.status(504).json({ 
+              error: 'Request timeout - transcription took too long. Try recording a shorter audio clip (10 seconds or less).' 
+            }));
+          }
           reject(res.status(500).json({ error: error.message }));
         }
       });

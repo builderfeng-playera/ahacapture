@@ -175,7 +175,9 @@
         let audioBuffer = null;
         let bufferIndex = 0;
         let totalSamplesRecorded = 0;
-        const BUFFER_DURATION = 30; // 30 seconds
+        // Note: Reduced to 10 seconds to work with Vercel free tier (10s timeout)
+        // For 30 seconds, upgrade to Vercel Pro plan ($20/month) which allows 60s timeout
+        const BUFFER_DURATION = 10; // 10 seconds (was 30)
         const SAMPLE_RATE = 44100;
         const BUFFER_SIZE = BUFFER_DURATION * SAMPLE_RATE;
         let isRecording = false;
@@ -229,7 +231,7 @@
                 processorNode.connect(audioContext.destination);
                 
                 isRecording = true;
-                statusDiv.textContent = 'Recording... (last 30 seconds)';
+                statusDiv.textContent = 'Recording... (last 10 seconds)';
                 statusDiv.classList.add('recording');
                 
             } catch (error) {
