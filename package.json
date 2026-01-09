@@ -1,0 +1,22 @@
+{
+  "name": "aha-catcher",
+  "version": "1.0.0",
+  "description": "Aha! Catcher - Capture fleeting ideas with zero friction",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "busboy": "^1.6.0",
+    "form-data": "^4.0.0",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.x"
+  }
+}
+

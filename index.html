@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aha! Catcher</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+        }
+
+        .status {
+            text-align: center;
+            color: #666;
+            margin-bottom: 20px;
+            font-size: 0.9em;
+        }
+
+        .status.recording {
+            color: #e74c3c;
+            font-weight: bold;
+        }
+
+        .capture-button {
+            width: 100%;
+            padding: 30px;
+            font-size: 2em;
+            font-weight: bold;
+            color: white;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+            margin-bottom: 30px;
+        }
+
+        .capture-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 15px 40px rgba(102, 126, 234, 0.6);
+        }
+
+        .capture-button:active {
+            transform: translateY(0);
+        }
+
+        .capture-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .results {
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 2px solid #eee;
+        }
+
+        .result-section {
+            margin-bottom: 25px;
+        }
+
+        .result-section h2 {
+            color: #333;
+            font-size: 1.3em;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+        }
+
+        .result-section h2::before {
+            content: "✨";
+            margin-right: 10px;
+        }
+
+        .result-content {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            color: #333;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .loading {
+            text-align: center;
+            color: #667eea;
+            font-size: 1.1em;
+            padding: 20px;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #fee;
+            color: #c33;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Aha! Catcher</h1>
+        <div id="status" class="status">Ready to capture</div>
+        <button id="captureButton" class="capture-button">Capture Aha!</button>
+        
+        <div id="results" class="results hidden">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Processing your Aha! moment...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const API_BASE_URL = 'https://space.ai-builders.com/backend';
+        // API key is handled by backend proxy - no need to set it here
+        
+        // Audio recording state
+        let audioContext = null;
+        let mediaStream = null;
+        let sourceNode = null;
+        let processorNode = null;
+        let audioBuffer = null;
+        let bufferIndex = 0;
+        let totalSamplesRecorded = 0;
+        const BUFFER_DURATION = 30; // 30 seconds
+        const SAMPLE_RATE = 44100;
+        const BUFFER_SIZE = BUFFER_DURATION * SAMPLE_RATE;
+        let isRecording = false;
+
+        // DOM elements
+        const captureButton = document.getElementById('captureButton');
+        const statusDiv = document.getElementById('status');
+        const resultsDiv = document.getElementById('results');
+
+        // Initialize audio recording
+        async function initAudioRecording() {
+            try {
+                // Request microphone access
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: SAMPLE_RATE,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    } 
+                });
+                
+                mediaStream = stream;
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: SAMPLE_RATE
+                });
+                
+                sourceNode = audioContext.createMediaStreamSource(stream);
+                processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+                
+                // Initialize circular buffer
+                audioBuffer = new Float32Array(BUFFER_SIZE);
+                bufferIndex = 0;
+                totalSamplesRecorded = 0;
+                
+                processorNode.onaudioprocess = function(e) {
+                    if (!isRecording) return;
+                    
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    const inputLength = inputData.length;
+                    
+                    // Add new samples to circular buffer (overwrites oldest samples)
+                    for (let i = 0; i < inputLength; i++) {
+                        audioBuffer[bufferIndex] = inputData[i];
+                        bufferIndex = (bufferIndex + 1) % BUFFER_SIZE;
+                        totalSamplesRecorded++;
+                    }
+                };
+                
+                sourceNode.connect(processorNode);
+                processorNode.connect(audioContext.destination);
+                
+                isRecording = true;
+                statusDiv.textContent = 'Recording... (last 30 seconds)';
+                statusDiv.classList.add('recording');
+                
+            } catch (error) {
+                console.error('Error initializing audio:', error);
+                alert('Could not access microphone. Please grant microphone permissions.');
+                statusDiv.textContent = 'Error: Microphone access denied';
+            }
+        }
+
+        // Convert Float32Array to WAV format
+        function float32ArrayToWav(buffer, sampleRate) {
+            const length = buffer.length;
+            const arrayBuffer = new ArrayBuffer(44 + length * 2);
+            const view = new DataView(arrayBuffer);
+            const samples = new Int16Array(arrayBuffer, 44);
+            
+            // Convert float samples to 16-bit PCM
+            for (let i = 0; i < length; i++) {
+                const s = Math.max(-1, Math.min(1, buffer[i]));
+                samples[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            
+            // WAV header
+            const writeString = (offset, string) => {
+                for (let i = 0; i < string.length; i++) {
+                    view.setUint8(offset + i, string.charCodeAt(i));
+                }
+            };
+            
+            writeString(0, 'RIFF');
+            view.setUint32(4, 36 + length * 2, true);
+            writeString(8, 'WAVE');
+            writeString(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true);
+            view.setUint16(32, 2, true);
+            view.setUint16(34, 16, true);
+            writeString(36, 'data');
+            view.setUint32(40, length * 2, true);
+            
+            return arrayBuffer;
+        }
+
+        // Get the last 30 seconds from circular buffer
+        function getLast30Seconds() {
+            const samplesToReturn = Math.min(totalSamplesRecorded, BUFFER_SIZE);
+            const result = new Float32Array(samplesToReturn);
+            
+            // If buffer hasn't wrapped around yet (we have less than 30 seconds)
+            if (totalSamplesRecorded < BUFFER_SIZE) {
+                // Just return samples from start to current position
+                for (let i = 0; i < samplesToReturn; i++) {
+                    result[i] = audioBuffer[i];
+                }
+            } else {
+                // Buffer has wrapped around, reconstruct chronological order
+                // bufferIndex points to where the next sample will be written
+                // which is also where the oldest sample in the buffer is
+                
+                // Copy oldest samples (from bufferIndex to end)
+                const oldestCount = BUFFER_SIZE - bufferIndex;
+                for (let i = 0; i < oldestCount; i++) {
+                    result[i] = audioBuffer[bufferIndex + i];
+                }
+                
+                // Copy newest samples (from 0 to bufferIndex-1)
+                for (let i = 0; i < bufferIndex; i++) {
+                    result[oldestCount + i] = audioBuffer[i];
+                }
+            }
+            
+            return result;
+        }
+
+        // Transcribe audio using the proxy server (avoids CORS)
+        async function transcribeAudio(audioBlob) {
+            const formData = new FormData();
+            formData.append('audio_file', audioBlob, 'recording.wav');
+            
+            // Use proxy server instead of direct API call
+            const response = await fetch('/api/transcribe', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (!response.ok) {
+                const error = await response.text();
+                throw new Error(`Transcription failed: ${error}`);
+            }
+            
+            return await response.json();
+        }
+
+        // Generate research summary using proxy server (avoids CORS)
+        async function generateResearchSummary(transcription) {
+            const response = await fetch('/api/chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    model: 'supermind-agent-v1',
+                    messages: [
+                        {
+                            role: 'system',
+                            content: 'You are a helpful assistant that analyzes ideas and provides relevant research summaries. When given a transcription of an idea or thought, identify the core concept and perform a web search to provide a concise research summary with relevant information.'
+                        },
+                        {
+                            role: 'user',
+                            content: `I just had this idea: "${transcription.text}"\n\nPlease identify the core concept and provide a research summary with relevant information.`
+                        }
+                    ],
+                    temperature: 0.7,
+                    max_tokens: 500
+                })
+            });
+            
+            if (!response.ok) {
+                const error = await response.text();
+                throw new Error(`Research summary failed: ${error}`);
+            }
+            
+            const data = await response.json();
+            return data.choices[0].message.content;
+        }
+
+        // Display results
+        function displayResults(transcription, researchSummary) {
+            resultsDiv.classList.remove('hidden');
+            resultsDiv.innerHTML = `
+                <div class="result-section">
+                    <h2>Transcription</h2>
+                    <div class="result-content">${transcription.text}</div>
+                </div>
+                <div class="result-section">
+                    <h2>Research Summary</h2>
+                    <div class="result-content">${researchSummary}</div>
+                </div>
+            `;
+        }
+
+        // Handle capture button click
+        captureButton.addEventListener('click', async () => {
+            if (!isRecording) {
+                await initAudioRecording();
+                return;
+            }
+            
+            try {
+                captureButton.disabled = true;
+                captureButton.textContent = 'Processing...';
+                statusDiv.textContent = 'Capturing and processing...';
+                
+                // Get the last 30 seconds of audio
+                const audioData = getLast30Seconds();
+                
+                // Convert to WAV
+                const wavBuffer = float32ArrayToWav(audioData, SAMPLE_RATE);
+                const audioBlob = new Blob([wavBuffer], { type: 'audio/wav' });
+                
+                // Show loading state
+                resultsDiv.classList.remove('hidden');
+                resultsDiv.innerHTML = `
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Transcribing audio...</p>
+                    </div>
+                `;
+                
+                // Transcribe audio
+                const transcription = await transcribeAudio(audioBlob);
+                
+                // Update loading state
+                resultsDiv.innerHTML = `
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Generating research summary...</p>
+                    </div>
+                `;
+                
+                // Generate research summary
+                const researchSummary = await generateResearchSummary(transcription);
+                
+                // Display results
+                displayResults(transcription, researchSummary);
+                
+                statusDiv.textContent = 'Capture complete!';
+                statusDiv.classList.remove('recording');
+                captureButton.textContent = 'Capture Another Aha!';
+                captureButton.disabled = false;
+                
+            } catch (error) {
+                console.error('Error processing audio:', error);
+                resultsDiv.classList.remove('hidden');
+                resultsDiv.innerHTML = `
+                    <div class="error">
+                        <strong>Error:</strong> ${error.message}
+                        <br><br>
+                        Please check your API key and try again.
+                    </div>
+                `;
+                captureButton.textContent = 'Try Again';
+                captureButton.disabled = false;
+                statusDiv.textContent = 'Error occurred';
+                statusDiv.classList.remove('recording');
+            }
+        });
+
+        // Initialize on page load
+        window.addEventListener('load', () => {
+            // API key is configured, ready to use
+        });
+    </script>
+</body>
+</html>
+
